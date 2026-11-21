@@ -816,6 +816,10 @@ fun ReaderScreen(
                         anchor = null
                     }
                 },
+                onExcerpt = {
+                    viewModel.excerptSelection(sel)
+                    selection = null; anchor = null
+                },
                 onPurify = {
                     viewModel.purifySelection(sel.text)
                     selection = null; anchor = null
@@ -910,6 +914,7 @@ fun ReaderScreen(
                 }
             },
             onReaderSheetOpen = { viewModel.setReaderSheetOpen(it) },
+            notes = rememberReaderNotesActions(viewModel),
             pageBackdrop = pageBackdrop,
         )
 

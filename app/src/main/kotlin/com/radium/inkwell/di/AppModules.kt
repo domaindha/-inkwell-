@@ -159,7 +159,7 @@ val appModule = module {
 
     viewModel { BookshelfViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (bookId: String) ->
-        ReaderViewModel(bookId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        ReaderViewModel(bookId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     viewModel { SearchViewModel(get(), get(), get(), get()) }
     viewModel { (results: List<com.radium.inkwell.core.source.SearchResult>) ->
@@ -178,6 +178,7 @@ val appModule = module {
     viewModel { com.radium.inkwell.ui.feedback.FeedbackViewModel(androidContext(), get(), get(), get()) }
     viewModel { com.radium.inkwell.ui.settings.DeveloperViewModel(get(), get()) }
     viewModel { com.radium.inkwell.ui.stats.ReadingStatsViewModel(get(), get()) }
+    viewModel { com.radium.inkwell.ui.excerpt.ExcerptsViewModel(get(), get()) }
     viewModel { com.radium.inkwell.ui.replace.ReplaceRuleViewModel(androidContext(), get(), get(), get()) }
     viewModel { com.radium.inkwell.ui.rss.RssSourceViewModel(androidContext(), get(), get()) }
     // 空串 = 看「全部」（Koin 的参数别传 null）

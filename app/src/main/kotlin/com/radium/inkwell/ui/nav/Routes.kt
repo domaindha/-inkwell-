@@ -124,6 +124,10 @@ data object SettingsRoute : NavKey
 @Serializable
 data object ReadingStatsRoute : NavKey
 
+/** 我的摘抄：所有书里摘下来的句子（设置一级页进去，同阅读记录） */
+@Serializable
+data object ExcerptsRoute : NavKey
+
 @Serializable
 data object AppearanceSettingsRoute : NavKey
 
@@ -167,6 +171,7 @@ internal fun NavKey?.diagnosticName(): String = when (this) {
     is SourceWizardRoute -> "source_wizard"
     is SettingsRoute -> "settings"
     is ReadingStatsRoute -> "reading_stats"
+    is ExcerptsRoute -> "excerpts"
     is AppearanceSettingsRoute -> "appearance_settings"
     is ReadingSettingsRoute -> "reading_settings"
     is AboutSettingsRoute -> "about"
@@ -191,6 +196,7 @@ internal fun NavKey?.diagnosticName(): String = when (this) {
  * ```
  * 设置 (1)
  * ├─ 阅读记录 (2)
+ * ├─ 我的摘抄 (2)
  * ├─ 外观 (2) ── 主题 (3)
  * ├─ 阅读 (2) ─┬ 书源管理 (3) ─┬ 书源详情 (4)
  * │            │               └ 新建书源 (4)
@@ -210,6 +216,7 @@ internal fun NavKey?.diagnosticName(): String = when (this) {
  */
 internal fun NavKey.settingsDetailDepth(): Int? = when (this) {
     is ReadingStatsRoute,
+    is ExcerptsRoute,
     is AppearanceSettingsRoute,
     is ReadingSettingsRoute,
     is AboutSettingsRoute,

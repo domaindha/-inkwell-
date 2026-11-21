@@ -26,12 +26,13 @@ import top.yukonga.miuix.kmp.basic.FloatingToolbar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Clear
 import top.yukonga.miuix.kmp.icon.extended.Copy
+import top.yukonga.miuix.kmp.icon.extended.Create
 import top.yukonga.miuix.kmp.icon.extended.Replace
 import androidx.compose.ui.graphics.luminance
 import com.radium.inkwell.ui.components.smallGlassHighlight
 
 /**
- * 选中文字后的操作条：底部居中的一颗玻璃药丸（Miuix [FloatingToolbar]），复制 · 删除 · 替换，图标在上字在下
+ * 选中文字后的操作条：底部居中的一颗玻璃药丸（Miuix [FloatingToolbar]），复制 · 摘抄 · 删除 · 替换，图标在上字在下
  * （[IconLabelButton]，同阅读菜单的操作条）。
  *
  * 从前是四个光图标（复制 / 净化 / 替换 / 关闭）：「净化」和「替换」两个图标长得像，得猜；「净化」做的就是删，
@@ -49,8 +50,10 @@ import com.radium.inkwell.ui.components.smallGlassHighlight
  *
  * 位置由调用方根据手柄位置决定，避免挡住可拖动的边界。
  *
- * 选区跨了段（[canPurify] = false）就只剩「复制」：净化规则逐段匹配，带换行的原文删不掉也换不了，
- * 留着两个按钮点了只会建出一条永远不生效的规则。
+ * 选区跨了段（[canPurify] = false）就只剩「复制」「摘抄」：净化规则逐段匹配，带换行的原文删不掉也换不了，
+ * 留着两个按钮点了只会建出一条永远不生效的规则。摘抄不受这个限制 —— 跨段摘一整段对话正是常见用法。
+ *
+ * 「摘抄」紧挨「复制」：同样是「把这段字带走」，一个进剪贴板，一个存进这本书的摘抄（目录面板「摘抄」页、设置「我的摘抄」）。
  *
  * @param replacePreview 原文 → 本章的命中数与预览，见 [ReplaceTextDialog]
  * @param onReplace (原文, 换成)；换成为空就是删掉
@@ -60,6 +63,7 @@ internal fun SelectionToolbar(
     selectedText: String,
     canPurify: Boolean,
     onCopy: () -> Unit,
+    onExcerpt: () -> Unit,
     onStepBoundary: (SelectionEnd, Boolean) -> Boolean,
     onPurify: () -> Unit,
     onReplace: (find: String, replacement: String) -> Unit,
@@ -102,6 +106,7 @@ internal fun SelectionToolbar(
                     )
                 },
             )
+            IconLabelButton(MiuixIcons.Create, "摘抄", onExcerpt)
             // 最常用的动作：把这句话从本书里删掉
             if (canPurify) {
                 IconLabelButton(MiuixIcons.Clear, "删除", onPurify)
