@@ -94,6 +94,15 @@ class BookDetailViewModel(
 
     fun cancelDownload() = downloader.cancel(bookId)
 
+    /** 收藏 / 取消收藏。取最新行再翻转：页面上的那份可能是追更前的快照 */
+    fun toggleFavorite() {
+        viewModelScope.launch {
+            val book = bookRepo.getBook(bookId) ?: return@launch
+            bookRepo.setFavorite(bookId, !book.favorite)
+            messages.emit(if (book.favorite) "已取消收藏" else "已收藏")
+        }
+    }
+
     /** 进度写完了，页面该进阅读器了 */
     private val _openReader = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val openReader: SharedFlow<Unit> = _openReader

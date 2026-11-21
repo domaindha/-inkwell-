@@ -195,6 +195,12 @@ class BookshelfViewModel(
         /** 「未分组」这一档的哨兵值 —— 它和「全部」(null) 不是一回事 */
         const val UNGROUPED = "\u0000ungrouped"
 
+        /**
+         * 「收藏」这一档的哨兵值。和分组放在同一条筛选条上（收藏也是「我只想看这几本」），
+         * 但不是分组：一本书可以既在某个分组里、又被收藏，所以不能占 groupName。
+         */
+        const val FAVORITES = "\u0000favorites"
+
         /** 单本追更超时；与换源单源搜索同量级，避免一个吊源拖死整轮下拉 */
         private const val TOC_REFRESH_TIMEOUT_MS = 30_000L
 
@@ -329,6 +335,23 @@ class BookshelfViewModel(
             .toList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * 筛选条上要不要有「收藏」这一档：有收藏的书才出现。隐藏区收着时同 [groups]，不算隐藏的书 ——
+     * 只收藏了藏起来的书，「收藏」点进去是空的。
+     */
+    val hasFavorites: StateFlow<Boolean> = combine(allBooks, _showHidden) { list, showHidden ->
+        list.any { it.favorite && (showHidden || !it.hidden) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    init {
+        // 正筛着「收藏」、收藏的书却一本都不剩了（全取消了、或收起隐藏区后只剩藏着的）→ 回到「全部」，理由同下
+        viewModelScope.launch {
+            hasFavorites.collect { has ->
+                if (!has && _group.value == FAVORITES) _group.value = null
+            }
+        }
+    }
+
     init {
         // 正筛着的分组没了（删光了这组的书、或把它们都移去别组、或收起隐藏区后它只剩隐藏的书）
         // → 回到「全部」。否则 _group 指着一个筛选条上已经不存在的名字：书列表空着、chip 一个也不亮，
@@ -336,7 +359,7 @@ class BookshelfViewModel(
         viewModelScope.launch {
             groups.collect { gs ->
                 val g = _group.value
-                if (g != null && g != UNGROUPED && g !in gs) _group.value = null
+                if (g != null && g != UNGROUPED && g != FAVORITES && g !in gs) _group.value = null
             }
         }
     }
@@ -519,6 +542,7 @@ class BookshelfViewModel(
     private fun inGroup(book: BookEntity, g: String?): Boolean = when (g) {
         null -> true
         UNGROUPED -> book.groupName.isBlank()
+        FAVORITES -> book.favorite
         else -> book.groupName.trim() == g
     }
 
@@ -620,6 +644,25 @@ class BookshelfViewModel(
         viewModelScope.launch {
             bookRepo.setGroup(bookId, group.trim())
             messages.emit(if (group.isBlank()) "已移出分组" else "已归入「${group.trim()}」")
+        }
+    }
+
+    fun setFavorite(bookId: String, favorite: Boolean) {
+        viewModelScope.launch {
+            bookRepo.setFavorite(bookId, favorite)
+            messages.emit(if (favorite) "已收藏，书架上点「收藏」只看这几本" else "已取消收藏")
+        }
+    }
+
+    /** 多选「收藏」：选中的全加上；都已经收藏了就全取消（底部操作条只有一个按钮，按选中的状态翻转） */
+    fun toggleFavoriteSelected() {
+        val ids = _selected.value
+        if (ids.isEmpty()) return
+        val favorite = !allBooks.value.filter { it.id in ids }.all { it.favorite }
+        viewModelScope.launch {
+            bookRepo.setFavoriteAll(ids, favorite)
+            clearSelection()
+            messages.emit(if (favorite) "已收藏 ${ids.size} 本" else "已取消收藏 ${ids.size} 本")
         }
     }
 
