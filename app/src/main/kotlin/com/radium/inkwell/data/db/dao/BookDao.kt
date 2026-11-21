@@ -102,6 +102,10 @@ interface BookDao {
     @Query("UPDATE book SET hidden = :hidden, updatedAt = :now WHERE id = :id")
     suspend fun setHidden(id: String, hidden: Boolean, now: Long)
 
+    /** 收藏同分组、隐藏：跨设备同步的元数据，必须同时盖时间戳（理由见 [setGroup]） */
+    @Query("UPDATE book SET favorite = :favorite, updatedAt = :now WHERE id = :id")
+    suspend fun setFavorite(id: String, favorite: Boolean, now: Long)
+
     /** 打开这本书 = 你已经知道它更新了，红点清零；顺带记下打开时间给书架排序 */
     @Query("UPDATE book SET newChapterCount = 0, openedAt = :now WHERE id = :id")
     suspend fun markOpened(id: String, now: Long)

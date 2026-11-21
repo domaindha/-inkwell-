@@ -353,6 +353,7 @@ fun InkwellNavDisplay(
                 SettingsScreen(
                     onBack = { nav.back() },
                     onOpenReadingStats = { nav.go(ReadingStatsRoute) },
+                    onOpenExcerpts = { nav.go(ExcerptsRoute) },
                     onOpenAppearance = { nav.go(AppearanceSettingsRoute) },
                     onOpenReading = { nav.go(ReadingSettingsRoute) },
                     onOpenRss = { nav.go(RssSourceRoute) },
@@ -365,6 +366,17 @@ fun InkwellNavDisplay(
             ) {
                 val vm = koinViewModel<com.radium.inkwell.ui.stats.ReadingStatsViewModel>()
                 com.radium.inkwell.ui.stats.ReadingStatsScreen(onBack = { nav.back() }, viewModel = vm)
+            }
+            entry<ExcerptsRoute>(
+                metadata = ListDetailSceneStrategy.detailPane(sceneKey = NavPaneGroup.SETTINGS),
+            ) {
+                val vm = koinViewModel<com.radium.inkwell.ui.excerpt.ExcerptsViewModel>()
+                com.radium.inkwell.ui.excerpt.ExcerptsScreen(
+                    onBack = { nav.back() },
+                    // 跳回原文：进度已经写成摘抄的位置（见 ExcerptsViewModel.open），这里只管进阅读器
+                    onOpenBook = { id -> nav.openBook(id, TransformOrigin.Center) },
+                    viewModel = vm,
+                )
             }
             entry<AppearanceSettingsRoute>(
                 metadata = ListDetailSceneStrategy.detailPane(sceneKey = NavPaneGroup.SETTINGS),

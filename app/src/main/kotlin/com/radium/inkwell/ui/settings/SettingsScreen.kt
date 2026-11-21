@@ -5,6 +5,7 @@ import com.radium.inkwell.ui.bookshelf.StandaloneDuplicateBooksSheet
 import com.radium.inkwell.ui.components.SwitchRow
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Copy
+import top.yukonga.miuix.kmp.icon.extended.Create
 import com.radium.inkwell.ui.components.horizontalOnly
 import com.radium.inkwell.ui.components.pageScroll
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -89,6 +90,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenReadingStats: () -> Unit,
+    onOpenExcerpts: () -> Unit,
     onOpenAppearance: () -> Unit,
     onOpenReading: () -> Unit,
     onOpenRss: () -> Unit,
@@ -197,11 +199,18 @@ fun SettingsScreen(
 
                 SectionHeader("阅读与外观")
                 SettingGroup {
+                    // 读书时摘下来的句子都收在这里（阅读页选字 →「摘抄」）；单本书的在阅读页目录面板的「摘抄」页
+                    SettingRow(
+                        title = "我的摘抄",
+                        icon = MiuixIcons.Create,
+                        onClick = onOpenExcerpts,
+                        position = SettingGroupPosition.First,
+                    )
                     SettingRow(
                         title = "来源与净化",
                         icon = MiuixIcons.Notes,
                         onClick = onOpenReading,
-                        position = SettingGroupPosition.First,
+                        position = SettingGroupPosition.Middle,
                     )
                     SettingRow(
                         title = "外观",

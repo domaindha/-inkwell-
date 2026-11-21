@@ -31,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.radium.inkwell.data.db.entity.BookEntity
@@ -67,6 +69,8 @@ import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.icon.extended.Favorites
+import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.icon.extended.Report
 
@@ -110,6 +114,19 @@ fun BookDetailScreen(
                         null
                     },
                     actions = {
+                        // 收藏：书架「收藏」筛选只看这几本。实心星 + 强调色 = 已收藏，读屏念「已收藏」
+                        if (book != null) {
+                            AppIconButton(
+                                onClick = { viewModel.toggleFavorite() },
+                                modifier = Modifier.semantics { stateDescription = if (book.favorite) "已收藏" else "未收藏" },
+                                contentColor = if (book.favorite) MiuixTheme.colorScheme.primary else Color.Unspecified,
+                            ) {
+                                Icon(
+                                    if (book.favorite) MiuixIcons.FavoritesFill else MiuixIcons.Favorites,
+                                    contentDescription = if (book.favorite) "取消收藏" else "收藏",
+                                )
+                            }
+                        }
                         if (book?.type == BookType.NET) {
                             AppIconButton(
                                 onClick = { viewModel.refresh() },

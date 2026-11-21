@@ -36,6 +36,7 @@ class BackupSync(private val client: WebDavClient) {
                 replaceRules = merged.replaceRules, rssSources = merged.rssSources,
                 readerSettings = merged.mergedReaderSettings, appSettings = merged.mergedAppSettings,
                 readingStats = merged.readingStats,
+                bookmarks = merged.bookmarks, excerpts = merged.excerpts,
             )
             if (merged != null) apply(merged)
             if (remote != null && sameContent(payload, remote)) {
@@ -63,5 +64,7 @@ class BackupSync(private val client: WebDavClient) {
             a.replaceRules.associateBy { it.id } == b.replaceRules.associateBy { it.id } &&
             a.rssSources.associateBy { it.id } == b.rssSources.associateBy { it.id } &&
             a.readerSettings == b.readerSettings && a.appSettings == b.appSettings &&
-            a.readingStats.associateBy { it.key } == b.readingStats.associateBy { it.key }
+            a.readingStats.associateBy { it.key } == b.readingStats.associateBy { it.key } &&
+            a.bookmarks.associateBy { it.id } == b.bookmarks.associateBy { it.id } &&
+            a.excerpts.associateBy { it.id } == b.excerpts.associateBy { it.id }
 }

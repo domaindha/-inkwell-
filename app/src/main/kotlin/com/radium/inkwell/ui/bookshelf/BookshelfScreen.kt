@@ -123,6 +123,8 @@ import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Hide
 import top.yukonga.miuix.kmp.icon.extended.Folder
+import top.yukonga.miuix.kmp.icon.extended.Favorites
+import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.SelectAll
 import top.yukonga.miuix.kmp.icon.extended.Settings
@@ -209,6 +211,7 @@ fun BookshelfScreen(
     val allBooks by viewModel.allBooks.collectAsStateWithLifecycle()
     val groups by viewModel.groups.collectAsStateWithLifecycle()
     val group by viewModel.group.collectAsStateWithLifecycle()
+    val hasFavorites by viewModel.hasFavorites.collectAsStateWithLifecycle()
     val selected by viewModel.selected.collectAsStateWithLifecycle()
     val selectionMode = selected.isNotEmpty()
     // 多选态底部操作条占掉的高度（BatchActionBar 量好报上来），垫到书架末尾
@@ -408,28 +411,33 @@ fun BookshelfScreen(
     val shelfHeader: @Composable () -> Unit = {
         if (showShelf) {
             Column {
-                // 只有真的分了组才显示筛选条 —— 没分组的人不该被一排"全部"占掉一行屏幕。
-                // 收敛到共享 ChipRow（与发现页/订阅页同一形态、同一首尾边距）
-                if (groups.isNotEmpty()) {
-                    val chipOptions = listOf("全部") + groups + listOf("未分组")
-                    val selectedChip = when (group) {
-                        null -> 0
-                        BookshelfViewModel.UNGROUPED -> chipOptions.lastIndex
-                        else -> (groups.indexOf(group) + 1).coerceAtLeast(0)
+                // 只有真的分了组、或收藏过书才显示筛选条 —— 两样都没有的人不该被一排"全部"占掉一行屏幕。
+                // 收敛到共享 ChipRow（与发现页/订阅页同一形态、同一首尾边距）。
+                // 「收藏」紧跟「全部」：书多、读得散的时候，它是最常点的那一档；没分组时就只有「全部 · 收藏」两颗，
+                // 不出「未分组」（全都没分组，它和「全部」一模一样）
+                if (groups.isNotEmpty() || hasFavorites) {
+                    // 每颗 chip 对应的筛选值；null = 全部。和文案一一对应，选中项按值找，别再按下标推算
+                    val chipValues = buildList<String?> {
+                        add(null)
+                        if (hasFavorites) add(BookshelfViewModel.FAVORITES)
+                        addAll(groups)
+                        if (groups.isNotEmpty()) add(BookshelfViewModel.UNGROUPED)
                     }
+                    val chipOptions = chipValues.map { v ->
+                        when (v) {
+                            null -> "全部"
+                            BookshelfViewModel.FAVORITES -> "收藏"
+                            BookshelfViewModel.UNGROUPED -> "未分组"
+                            else -> v
+                        }
+                    }
+                    val selectedChip = chipValues.indexOf(group).coerceAtLeast(0)
                     ChipRow(
                         options = chipOptions,
                         selectedIndex = selectedChip,
                         onSelect = { i ->
                             groupSwitchFrom = books
-                            viewModel.setGroup(
-                                when (i) {
-                                    0 -> null
-                                    chipOptions.lastIndex -> BookshelfViewModel.UNGROUPED
-                                    // chipOptions[0] 是「全部」，所以分组下标 = i-1
-                                    else -> groups[i - 1]
-                                }
-                            )
+                            viewModel.setGroup(chipValues[i])
                         },
                         contentPadding = PaddingValues(
                             horizontal = Dimens.listHorizontal,
@@ -454,6 +462,12 @@ fun BookshelfScreen(
             onDismissRequest = { if (actionTarget?.id == book.id) actionTarget = null },
             items = buildList {
                 add(AppMenuItem("书籍详情", onClick = { onOpenDetail(book.id) }))
+                add(
+                    AppMenuItem(
+                        if (book.favorite) "取消收藏" else "收藏",
+                        onClick = { viewModel.setFavorite(book.id, !book.favorite) },
+                    ),
+                )
                 add(
                     AppMenuItem(
                         "设置分组",
@@ -636,6 +650,15 @@ fun BookshelfScreen(
                             groupInput = ""
                             showGroupAssign = true
                         }),
+                    )
+                    // 选中的都已收藏就是「取消收藏」，否则一键全收藏
+                    val allFavorite = selected.isNotEmpty() && allBooks.filter { it.id in selected }.all { it.favorite }
+                    add(
+                        BatchAction(
+                            if (allFavorite) MiuixIcons.FavoritesFill else MiuixIcons.Favorites,
+                            if (allFavorite) "取消收藏" else "收藏",
+                            onClick = viewModel::toggleFavoriteSelected,
+                        ),
                     )
                     // 隐藏相关只在隐藏区露面 —— 平时这里出现「隐藏」等于把功能写在脸上
                     if (showHidden) {

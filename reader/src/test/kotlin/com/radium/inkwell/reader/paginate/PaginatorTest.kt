@@ -29,6 +29,25 @@ class PaginatorTest {
     private fun cjk(n: Int) = "字".repeat(n)
 
     @Test
+    fun `各段在章内的起点与阅读进度同一套坐标`() {
+        // 标题 5 字 + 段落 30 字 + 分隔线（占 1）+ 段落 10 字
+        val content = ChapterContent(
+            listOf(
+                ContentElement.Paragraph(cjk(30)),
+                ContentElement.Divider,
+                ContentElement.Paragraph(cjk(10)),
+            ),
+        )
+        val result = paginator.paginate(0, "第一章 测", content, spec())
+        assertEquals(listOf(0, 5, 35, 36), result.elementStarts.toList())
+        // 第二段（元素 3）段内第 4 个字 = 36 + 4
+        assertEquals(40, result.charOffsetOf(3, 4))
+        assertEquals(null, result.charOffsetOf(9, 0))
+        // 和分页的页首偏移对得上：章首页从 0 开始，元素 1 的起点就是标题之后
+        assertEquals(0, result.chapter.pages.first().startCharOffset)
+    }
+
+    @Test
     fun `single short paragraph fits one page`() {
         val content = ChapterContent(listOf(ContentElement.Paragraph(cjk(30))))
         val result = paginator.paginate(0, "", content, spec())

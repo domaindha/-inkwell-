@@ -68,6 +68,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.radium.inkwell.reader.render.TextSelection
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -287,6 +288,7 @@ class ReaderViewModel(
     private val fontStore: ReaderFontStore,
     private val readingStats: ReadingStatsRepository,
     private val readHealth: SourceReadHealth,
+    private val notes: com.radium.inkwell.data.repo.BookNotesRepository,
 ) : ViewModel() {
 
     // 用已预热的真实设置播种首帧，避免进书先闪一帧浅色默认主题再切深色
@@ -545,6 +547,7 @@ class ReaderViewModel(
             ),
             measured = measured,
             complete = complete,
+            elementStarts = elementStarts,
         )
 
     private suspend fun loadSession() {
@@ -1290,6 +1293,100 @@ class ReaderViewModel(
                 if (replacement.isEmpty()) "已删除「${text.take(12)}」" else "已替换「${text.take(12)}」",
             )
         }
+    }
+
+    // ---------- 书签 / 摘抄 ----------
+
+    /**
+     * 这本书的书签。Eagerly：阅读菜单「⋮」要据此在「添加书签 / 删除本页书签」之间二选一，
+     * 菜单打开那一刻就得是准的，不能等订阅上了再查（一张按 bookId 走索引的小表，常驻无妨）。
+     */
+    val bookmarks: StateFlow<List<com.radium.inkwell.data.db.entity.BookmarkEntity>> =
+        notes.observeBookmarks(bookId).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** 这本书的摘抄，只在目录面板的「摘抄」页开着时订阅 */
+    val excerpts: StateFlow<List<com.radium.inkwell.data.db.entity.ExcerptEntity>> =
+        notes.observeExcerpts(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * 本页有书签就删掉，没有就加一个。位置记**这一页的页首** (章, 章内字符偏移)，与阅读进度同一套坐标：
+     * 改了字号、边距，页码全变，偏移不变，跳回来还是从这一页的第一个字读起。
+     */
+    fun toggleBookmark() {
+        val s = _state.value
+        val page = s.page ?: return
+        if (s.loading || s.error != null) return
+        val existing = bookmarks.value.onPage(s.chapterIndex, page.spec)
+        viewModelScope.launch {
+            if (existing != null) {
+                notes.deleteBookmark(existing.id)
+                messageBus.emit("已删除本页书签")
+            } else {
+                notes.addBookmark(
+                    bookId = bookId,
+                    chapterIndex = s.chapterIndex,
+                    charOffset = page.spec.startCharOffset,
+                    chapterTitle = s.chapterTitle,
+                    excerpt = page.bookmarkSnippet(),
+                )
+                messageBus.emit("已添加书签")
+            }
+        }
+    }
+
+    fun deleteBookmark(id: String) {
+        viewModelScope.launch {
+            notes.deleteBookmark(id)
+            messageBus.emit("已删除书签")
+        }
+    }
+
+    /**
+     * 把选中的字存成一条摘抄。位置记选区起点在章内的字符偏移（段内偏移 + 那一段在章内的起点，
+     * 见 Paginator.Result.elementStarts），与阅读进度同一套坐标，「跳到原文」就落在这句话所在的那一页。
+     * 分页结果已经没了（极少见：刚换了排版）就退回这一页的页首。
+     */
+    fun excerptSelection(selection: TextSelection) {
+        val text = selection.text.trim()
+        if (text.isEmpty()) return
+        val s = _state.value
+        val chapterIndex = s.chapterIndex
+        val offset = paginated[chapterIndex]?.charOffsetOf(selection.elementIndex, selection.start)
+            ?: s.page?.spec?.startCharOffset
+            ?: 0
+        viewModelScope.launch {
+            notes.addExcerpt(
+                bookId = bookId,
+                chapterIndex = chapterIndex,
+                charOffset = offset,
+                chapterTitle = s.chapterTitle,
+                text = text,
+            )
+            messageBus.emit("已摘抄，在目录面板的「摘抄」里查看")
+        }
+    }
+
+    fun deleteExcerpt(id: String) {
+        viewModelScope.launch {
+            notes.deleteExcerpt(id)
+            messageBus.emit("已删除摘抄")
+        }
+    }
+
+    fun notifyCopied() {
+        viewModelScope.launch { messageBus.emit("已复制") }
+    }
+
+    /**
+     * 从书签 / 摘抄跳到 (章, 章内偏移)。朗读开着时一起挪过去，同目录跳章（[jumpFromReaderMenu]）。
+     * 目录换过（换源后章节数变了）、章号已经不在目录里的，gotoChapter 自己会忽略。
+     */
+    internal fun jumpToPosition(chapterIndex: Int, charOffset: Int) {
+        if (speech.state.value.active && chapterIndex in 0 until _state.value.chapterCount) {
+            speechPosition = null
+            speech.seek(chapterIndex, charOffset)
+        }
+        gotoChapter(chapterIndex, charOffset)
     }
 
     /**

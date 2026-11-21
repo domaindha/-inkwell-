@@ -413,6 +413,8 @@ class BookRepository(
         hitDao.deleteByBook(id)
         // 本书专属净化规则同样挂 bookId；软删打墓碑，WebDAV 合并才能把删除同步出去
         replaceRuleDao.softDeleteByBook(id, now)
+        // 书签是书里的位置，书没了就跟着打墓碑（同步出去）。摘抄不动：摘下来的话是用户自己的（见 ExcerptEntity）
+        db.bookmarkDao().softDeleteByBook(id, now)
         // 软删除：留下墓碑，否则 WebDAV 同步会把这本书从远端又拉回来。
         // 章节、缓存、封面这些本地附属物照旧真删 —— 它们不参与同步，留着只占地方
         bookDao.softDelete(id, now)
@@ -517,6 +519,16 @@ class BookRepository(
 
     suspend fun setHidden(id: String, hidden: Boolean) {
         bookDao.setHidden(id, hidden, System.currentTimeMillis())
+    }
+
+    suspend fun setFavorite(id: String, favorite: Boolean) {
+        bookDao.setFavorite(id, favorite, System.currentTimeMillis())
+    }
+
+    /** 多选收藏：同 [setHiddenAll]，一个事务 */
+    suspend fun setFavoriteAll(ids: Collection<String>, favorite: Boolean) {
+        val now = System.currentTimeMillis()
+        db.withWriteTransaction { for (id in ids) bookDao.setFavorite(id, favorite, now) }
     }
 
     suspend fun saveProgress(id: String, chapterIndex: Int, charOffset: Int) {

@@ -58,6 +58,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -128,6 +130,10 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import com.radium.inkwell.ui.components.AppBottomSheet
 import com.radium.inkwell.ui.components.SegmentedChoice
+import com.radium.inkwell.ui.components.AppTabContent
+import com.radium.inkwell.ui.components.AppSheetScope
+import com.radium.inkwell.data.db.entity.BookmarkEntity
+import com.radium.inkwell.data.db.entity.ExcerptEntity
 import com.radium.inkwell.ui.components.SearchField
 import com.radium.inkwell.ui.theme.AppShapes
 import top.yukonga.miuix.kmp.basic.Card
@@ -189,10 +195,15 @@ fun ReaderMenu(
     onDismiss: () -> Unit,
     onSwipePage: (FlipDirection) -> Unit,
     onReaderSheetOpen: (Boolean) -> Unit,
+    /** 书签 / 摘抄：「⋮」里的添加书签，目录面板里的「书签」「摘抄」两页（见 ReaderNotes） */
+    notes: ReaderNotesActions,
     /** 录着翻页区的图层（见 ReaderScreen）：菜单的几条栏对它取样做毛玻璃。null 时退回实色栏 */
     pageBackdrop: LayerBackdrop? = null,
 ) {
     var showToc by remember { mutableStateOf(false) }
+    val bookmarks by notes.bookmarks.collectAsStateWithLifecycle()
+    // 这一页上有没有书签：「⋮」里据此写「添加书签」还是「删除本页书签」
+    val pageBookmark = bookmarks.onPage(pageUi.chapterIndex, pageUi.page?.spec)
     var showSettings by remember { mutableStateOf(false) }
     var showMore by remember { mutableStateOf(false) }
 
@@ -318,6 +329,15 @@ fun ReaderMenu(
                                 expanded = showMore,
                                 onDismissRequest = { showMore = false },
                                 items = buildList {
+                                    // 书签放第一项：读到一半想记住这页，是这个菜单里最常点的
+                                    add(
+                                        AppMenuItem(
+                                            text = if (pageBookmark != null) "删除本页书签" else "添加书签",
+                                            summary = if (pageBookmark != null) null else "在目录面板的「书签」里找回这一页",
+                                            enabled = pageUi.page != null && !pageUi.loading && pageUi.error == null,
+                                            onClick = notes.onToggleBookmark,
+                                        ),
+                                    )
                                     add(
                                         AppMenuItem(
                                             text = if (overlay.autoFlipping) "停止自动翻页" else "自动翻页",
@@ -398,30 +418,71 @@ fun ReaderMenu(
         val appPrefs = koinInject<AppPrefs>()
         val reversed = appPrefs.tocReversedState.collectAsStateWithLifecycle().value ?: false
         val prefsScope = rememberCoroutineScope()
+        // 目录 · 书签 · 摘抄 三页共用这一个面板（都是「在这本书里找一个位置跳过去」），每次打开从目录看起。
+        // 面板标题跟着页签走；正序 / 倒序只对目录有意义，另两页不出这个按钮
+        var tab by remember { mutableIntStateOf(0) }
+        val orderAction: (@Composable AppSheetScope.() -> Unit)? = if (tab == 0) {
+            {
+                TocOrderButton(
+                    reversed = reversed,
+                    onToggle = { prefsScope.launch { appPrefs.setTocReversed(!reversed) } },
+                )
+            }
+        } else {
+            null
+        }
         // 面板底是浮层色（AppBottomSheet 默认的 background），章节行是卡片色，两者差一档。
         // 目录会滚到手势条下面：导航栏高度垫在列表末尾（见 TocList），不让面板在外面垫
         AppBottomSheet(
             onDismissRequest = { showToc = false },
             padNavigationBar = false,
-            title = "目录",
-            endAction = {
-                TocOrderButton(
-                    reversed = reversed,
-                    onToggle = { prefsScope.launch { appPrefs.setTocReversed(!reversed) } },
-                )
-            },
+            title = TOC_SHEET_TABS[tab],
+            endAction = orderAction,
         ) {
-            TocList(
-                toc = tocItems,
-                current = pageUi.chapterIndex,
-                // 本地书正文一直在，缓存指示对它没有意义（isCached 恒为 false，
-                // 显示出来只会让每一章都像"没预加载"）
-                showCacheState = session.isNetBook,
-                reversed = reversed,
-                // 目录跳章后收起整个菜单；上一章/下一章则留着菜单，方便连着翻。
-                // 跳章不等面板的退场动画（dismiss { }）：那会让翻到目标章晚上三百毫秒，像点了没反应
-                onSelect = { showToc = false; onGotoChapter(it); onDismiss() },
-            )
+            Column {
+                SegmentedChoice(
+                    options = TOC_SHEET_TABS,
+                    selectedIndex = tab,
+                    onSelect = { tab = it },
+                    modifier = Modifier.padding(horizontal = cardMargin(), vertical = Dimens.gapXS),
+                )
+                // 跳过去后收起整个菜单（同目录跳章），不等面板的退场动画
+                val jump: (Int, Int) -> Unit = { chapter, offset ->
+                    showToc = false
+                    notes.onJumpTo(chapter, offset)
+                    onDismiss()
+                }
+                // 三页各自限高（同一个 sheetListMaxHeight），切页签时面板不会被内容顶高（见 AppTabContent）
+                AppTabContent(targetState = tab, label = "readerTocTab") { page ->
+                    when (page) {
+                        0 -> TocList(
+                            toc = tocItems,
+                            current = pageUi.chapterIndex,
+                            // 本地书正文一直在，缓存指示对它没有意义（isCached 恒为 false，
+                            // 显示出来只会让每一章都像"没预加载"）
+                            showCacheState = session.isNetBook,
+                            reversed = reversed,
+                            // 目录跳章后收起整个菜单；上一章/下一章则留着菜单，方便连着翻。
+                            // 跳章不等面板的退场动画（dismiss { }）：那会让翻到目标章晚上三百毫秒，像点了没反应
+                            onSelect = { showToc = false; onGotoChapter(it); onDismiss() },
+                        )
+                        1 -> BookmarkList(
+                            bookmarks = bookmarks,
+                            onJump = { jump(it.chapterIndex, it.charOffset) },
+                            onDelete = { notes.onDeleteBookmark(it.id) },
+                        )
+                        else -> {
+                            val excerpts by notes.excerpts.collectAsStateWithLifecycle()
+                            ExcerptList(
+                                excerpts = excerpts,
+                                onJump = { jump(it.chapterIndex, it.charOffset) },
+                                onDelete = { notes.onDeleteExcerpt(it.id) },
+                                onCopied = notes.onCopied,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -885,6 +946,34 @@ private fun TocOrderButton(reversed: Boolean, onToggle: () -> Unit) {
     ) {
         Icon(MiuixIcons.Sort, contentDescription = "切换目录顺序")
     }
+}
+
+/** 目录面板的三个页签，下标即 ReaderMenu 里的 tab */
+private val TOC_SHEET_TABS = listOf("目录", "书签", "摘抄")
+
+/** 阅读菜单里书签 / 摘抄要用的数据与动作，由 ReaderScreen 从 ReaderViewModel 接过来（见 [rememberReaderNotesActions]） */
+@Stable
+class ReaderNotesActions(
+    val bookmarks: StateFlow<List<BookmarkEntity>>,
+    val excerpts: StateFlow<List<ExcerptEntity>>,
+    val onToggleBookmark: () -> Unit,
+    val onJumpTo: (chapterIndex: Int, charOffset: Int) -> Unit,
+    val onDeleteBookmark: (String) -> Unit,
+    val onDeleteExcerpt: (String) -> Unit,
+    val onCopied: () -> Unit,
+)
+
+@Composable
+internal fun rememberReaderNotesActions(viewModel: ReaderViewModel): ReaderNotesActions = remember(viewModel) {
+    ReaderNotesActions(
+        bookmarks = viewModel.bookmarks,
+        excerpts = viewModel.excerpts,
+        onToggleBookmark = viewModel::toggleBookmark,
+        onJumpTo = viewModel::jumpToPosition,
+        onDeleteBookmark = viewModel::deleteBookmark,
+        onDeleteExcerpt = viewModel::deleteExcerpt,
+        onCopied = viewModel::notifyCopied,
+    )
 }
 
 /** 定位到在读那章时，它上面留几章：看得出前后是哪几章 */

@@ -31,7 +31,17 @@ class Paginator(private val measurer: TextMeasureFacade) {
          * 翻页时若已在最后一页且 !complete，不要跳下一章 —— 下一页马上就来。
          */
         val complete: Boolean = true,
-    )
+        /**
+         * 每个排版元素在章内字符流里的起点（下标同 PageItem.elementIndex）。
+         * 选中的字要换算成和阅读进度同一套坐标 (章, 章内字符偏移) 时用：段内偏移 + 这一段的起点（摘抄就是这么记位置的）。
+         * 半截结果里还没排到的那些元素是 0。
+         */
+        val elementStarts: IntArray = IntArray(0),
+    ) {
+        /** 第 [elementIndex] 段段内第 [offsetInElement] 个字在章内的字符偏移；下标越界返回 null */
+        fun charOffsetOf(elementIndex: Int, offsetInElement: Int): Int? =
+            elementStarts.getOrNull(elementIndex)?.let { it + offsetInElement.coerceAtLeast(0) }
+    }
 
     /**
      * @param notifyAfterChar 调用方想尽快看到的章内偏移（进书进度）。覆盖到该偏移的页
@@ -60,6 +70,7 @@ class Paginator(private val measurer: TextMeasureFacade) {
             addAll(content.elements.map { it.asParagraph() })
         }
         val measured = HashMap<Int, MeasuredParagraph>()
+        val elementStarts = IntArray(elements.size)
         val pages = mutableListOf<PageSpec>()
         var cursor = PageCursor(spec)
         var charOffset = 0
@@ -85,6 +96,8 @@ class Paginator(private val measurer: TextMeasureFacade) {
             // 否则 Default 线程继续 put 时，主线程若正在遍历会 ConcurrentModification。
             if (complete) measured else HashMap(measured),
             complete,
+            // 同测量表：中途结果拷一份，Default 线程还在往后写
+            if (complete) elementStarts else elementStarts.copyOf(),
         )
 
         fun sealPage(endOfChapter: Boolean) {
@@ -104,6 +117,7 @@ class Paginator(private val measurer: TextMeasureFacade) {
 
         elements.forEachIndexed { idx, element ->
             if (isAbandoned()) return snapshot(complete = false)
+            elementStarts[idx] = charOffset
             when (element) {
                 is TitleElement -> {
                     if (element.text.isNotBlank()) {

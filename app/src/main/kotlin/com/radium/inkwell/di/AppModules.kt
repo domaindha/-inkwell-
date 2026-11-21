@@ -47,6 +47,9 @@ val appModule = module {
     single { get<InkwellDb>().rssSourceDao() }
     single { get<InkwellDb>().readingStatDao() }
     single { get<InkwellDb>().rssArticleDao() }
+    single { get<InkwellDb>().bookmarkDao() }
+    single { get<InkwellDb>().excerptDao() }
+    single { com.radium.inkwell.data.repo.BookNotesRepository(get(), get()) }
     single { com.radium.inkwell.data.repo.ReadingStatsRepository(get(), get(), get()) }
 
     // EPUB/MOBI 的 sniff 靠魔数，txt 兜底放最后
@@ -149,14 +152,14 @@ val appModule = module {
     single { NetBookRepository(get(), get(), get(), get(), get(), get()) }
     single { AutoSourceSwitcher(get(), get()) }
     single { com.radium.inkwell.util.LocalNetworkAccess(androidContext()) }
-    single { WebDavRepository(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { WebDavRepository(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { com.radium.inkwell.data.repo.LocalBookBackupRepository(get(), get(), get()) }
     single { com.radium.inkwell.data.net.OfficialWebDavClient(get()) }
     single { com.radium.inkwell.data.repo.OfficialWebDavRepository(get(), get()) }
 
     viewModel { BookshelfViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (bookId: String) ->
-        ReaderViewModel(bookId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        ReaderViewModel(bookId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     viewModel { SearchViewModel(get(), get(), get(), get()) }
     viewModel { (results: List<com.radium.inkwell.core.source.SearchResult>) ->
@@ -175,6 +178,7 @@ val appModule = module {
     viewModel { com.radium.inkwell.ui.feedback.FeedbackViewModel(androidContext(), get(), get(), get()) }
     viewModel { com.radium.inkwell.ui.settings.DeveloperViewModel(get(), get()) }
     viewModel { com.radium.inkwell.ui.stats.ReadingStatsViewModel(get(), get()) }
+    viewModel { com.radium.inkwell.ui.excerpt.ExcerptsViewModel(get(), get()) }
     viewModel { com.radium.inkwell.ui.replace.ReplaceRuleViewModel(androidContext(), get(), get(), get()) }
     viewModel { com.radium.inkwell.ui.rss.RssSourceViewModel(androidContext(), get(), get()) }
     // 空串 = 看「全部」（Koin 的参数别传 null）

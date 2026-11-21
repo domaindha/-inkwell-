@@ -8,7 +8,9 @@ import androidx.sqlite.execSQL
 import com.radium.inkwell.data.db.dao.BookDao
 import com.radium.inkwell.data.db.dao.BookSourceDao
 import com.radium.inkwell.data.db.dao.BookSourceHitDao
+import com.radium.inkwell.data.db.dao.BookmarkDao
 import com.radium.inkwell.data.db.dao.ChapterDao
+import com.radium.inkwell.data.db.dao.ExcerptDao
 import com.radium.inkwell.data.db.dao.ReplaceRuleDao
 import com.radium.inkwell.data.db.dao.RssArticleDao
 import com.radium.inkwell.data.db.dao.RssSourceDao
@@ -17,7 +19,9 @@ import com.radium.inkwell.data.db.dao.SourceReadHealthDao
 import com.radium.inkwell.data.db.entity.BookEntity
 import com.radium.inkwell.data.db.entity.BookSourceEntity
 import com.radium.inkwell.data.db.entity.BookSourceHitEntity
+import com.radium.inkwell.data.db.entity.BookmarkEntity
 import com.radium.inkwell.data.db.entity.ChapterEntity
+import com.radium.inkwell.data.db.entity.ExcerptEntity
 import com.radium.inkwell.data.db.entity.ReplaceRuleEntity
 import com.radium.inkwell.data.db.entity.RssArticleEntity
 import com.radium.inkwell.data.db.entity.RssSourceEntity
@@ -35,8 +39,10 @@ import com.radium.inkwell.data.db.entity.SourceReadHealthEntity
         ReadingStatEntity::class,
         RssArticleEntity::class,
         SourceReadHealthEntity::class,
+        BookmarkEntity::class,
+        ExcerptEntity::class,
     ],
-    version = 23,
+    version = 24,
     exportSchema = true,
 )
 abstract class InkwellDb : RoomDatabase() {
@@ -49,8 +55,40 @@ abstract class InkwellDb : RoomDatabase() {
     abstract fun readingStatDao(): ReadingStatDao
     abstract fun rssArticleDao(): RssArticleDao
     abstract fun sourceReadHealthDao(): SourceReadHealthDao
+    abstract fun bookmarkDao(): BookmarkDao
+    abstract fun excerptDao(): ExcerptDao
 
     companion object {
+        /**
+         * 收藏、书签、摘抄。只加列 + 纯新增表，老数据一行不动。
+         *
+         * 书签沿用 beta.26 那张表的设计（见 [MIGRATION_6_7]，位置存 (章, 章内字符偏移)），那张表在 [MIGRATION_7_8]
+         * 已经删掉了；这里另起一条迁移重新建，不去动那两条已发布的迁移 —— 从 v6、v7 升上来的老库照旧先建后删，
+         * 走到这一步再按新结构建一次（多出的 updatedAt / deleted 给 WebDAV 同步用）。
+         *
+         * 建表语句**逐字照抄** Room 按实体生成的建表代码（列、顺序、可空、主键、索引名），理由同 [MIGRATION_18_19]：
+         * 差一个字 Room 就拒绝开库。改实体必须同步改这里。
+         */
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override suspend fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE book ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `bookmark` (`id` TEXT NOT NULL, `bookId` TEXT NOT NULL, " +
+                        "`chapterIndex` INTEGER NOT NULL, `charOffset` INTEGER NOT NULL, `chapterTitle` TEXT NOT NULL, " +
+                        "`excerpt` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, " +
+                        "`deleted` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmark_bookId` ON `bookmark` (`bookId`)")
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `excerpt` (`id` TEXT NOT NULL, `bookId` TEXT NOT NULL, " +
+                        "`chapterIndex` INTEGER NOT NULL, `charOffset` INTEGER NOT NULL, `chapterTitle` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, " +
+                        "`deleted` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_excerpt_bookId` ON `excerpt` (`bookId`)")
+            }
+        }
+
         val MIGRATION_22_23 = object : Migration(22, 23) {
             override suspend fun migrate(connection: SQLiteConnection) {
                 connection.execSQL("ALTER TABLE book_source ADD COLUMN searchAt INTEGER NOT NULL DEFAULT 0")
@@ -387,6 +425,7 @@ abstract class InkwellDb : RoomDatabase() {
             MIGRATION_20_21,
             MIGRATION_21_22,
             MIGRATION_22_23,
+            MIGRATION_23_24,
         )
     }
 }
