@@ -5,6 +5,8 @@ import com.radium.inkwell.core.webdav.BackupBook
 import com.radium.inkwell.core.webdav.BackupSync
 import com.radium.inkwell.core.webdav.BackupMerger
 import com.radium.inkwell.core.webdav.BackupPayload
+import com.radium.inkwell.core.webdav.BackupBookmark
+import com.radium.inkwell.core.webdav.BackupExcerpt
 import com.radium.inkwell.core.webdav.BackupReplaceRule
 import com.radium.inkwell.core.webdav.BackupRssSource
 import com.radium.inkwell.core.webdav.mergeBackupRssSource
@@ -19,6 +21,8 @@ import com.radium.inkwell.data.db.dao.ChapterDao
 import com.radium.inkwell.data.db.entity.BookEntity
 import com.radium.inkwell.data.db.entity.BookSourceEntity
 import com.radium.inkwell.data.db.entity.BookType
+import com.radium.inkwell.data.db.entity.BookmarkEntity
+import com.radium.inkwell.data.db.entity.ExcerptEntity
 import com.radium.inkwell.data.db.entity.ReplaceRuleEntity
 import com.radium.inkwell.data.net.OfficialWebDav
 import com.radium.inkwell.data.prefs.AppPrefs
@@ -60,6 +64,8 @@ class WebDavRepository(
      */
     private val http: okhttp3.OkHttpClient,
     private val readingStats: ReadingStatsRepository,
+    /** 书签与摘抄，逐条 LWW（见 BackupMerger.mergeById） */
+    private val notes: BookNotesRepository,
 ) {
     private companion object {
         const val DIR = "inkwell"
@@ -184,7 +190,7 @@ class WebDavRepository(
     }
 
     /**
-     * 本地会进备份的东西最近一次改动的时间：书架（含进度）、书源、净化规则、订阅源、两份设置。
+     * 本地会进备份的东西最近一次改动的时间：书架（含进度）、书源、净化规则、订阅源、两份设置、书签与摘抄。
      *
      * 当「版本」用，按相等比（见 [syncLocked]）：任何一笔新写入，时间戳只要比现有的都新，这个值就变。
      * 盲区只剩系统时间被往回调之后的写入（新时间戳比已有的旧）—— 那种情况等时间走过来，或下一次手动同步。
@@ -194,7 +200,7 @@ class WebDavRepository(
         maxOf(bookDao.lastChangeAt(), sourceDao.lastChangeAt()),
         maxOf(replaceRules.lastChangeAt(), rssDao.lastChangeAt()),
         maxOf(appPrefs.updatedAt(), readerPrefs.updatedAt()),
-        readingStats.lastChangeAt(),
+        maxOf(readingStats.lastChangeAt(), notes.lastChangeAt()),
     )
 
     /** 远端备份的版本标记；读不到（服务器不支持 HEAD、网络抖一下）就是 null，调用方当「动过」处理 */
@@ -228,6 +234,7 @@ class WebDavRepository(
                 hidden = b.hidden,
                 deleted = b.deleted,
                 removedFromShelf = b.removedFromShelf,
+                favorite = b.favorite,
             )
         },
         // 逐条取完整行：SELECT * 全表会把大 JSON 塞进 CursorWindow（~2MB）直接闪退。
@@ -260,6 +267,8 @@ class WebDavRepository(
         readerSettings = readerPrefs.exportForBackup(),
         appSettings = appPrefs.exportForBackup(),
         readingStats = readingStats.exportForBackup(),
+        bookmarks = notes.allBookmarksForBackup().map { it.toBackup() },
+        excerpts = notes.allExcerptsForBackup().map { it.toBackup() },
     )
 
     private suspend fun applyToLocal(merged: BackupMerger.MergeResult): Int {
@@ -294,6 +303,19 @@ class WebDavRepository(
             merged.changedRssSources.forEach { r ->
                 applySyncedRss(rssDao.getById(r.id), r)?.let {
                     rssDao.upsertAll(listOf(it))
+                    n++
+                }
+            }
+            // 书签、摘抄：同净化规则，按事务里的最新行裁决，快照之后刚加 / 刚删的不被旧合并结果盖掉
+            merged.changedBookmarks.forEach { m ->
+                applySyncedBookmark(notes.getBookmark(m.id), m)?.let {
+                    notes.upsertBookmark(it)
+                    n++
+                }
+            }
+            merged.changedExcerpts.forEach { e ->
+                applySyncedExcerpt(notes.getExcerpt(e.id), e)?.let {
+                    notes.upsertExcerpt(it)
                     n++
                 }
             }
@@ -344,6 +366,7 @@ class WebDavRepository(
                         addedAt = if (b.addedAt > 0) b.addedAt else System.currentTimeMillis(),
                         updatedAt = b.updatedAt,
                         groupName = b.groupName, hidden = b.hidden,
+                        favorite = b.favorite ?: false,
                         // 墓碑也要落地：别把别的设备删掉的书当成新书插回来
                         deleted = b.deleted,
                         inShelf = !b.deleted && !b.removedFromShelf,
@@ -437,6 +460,8 @@ internal fun applySyncedBook(existing: BookEntity, b: BackupBook): SyncedBook {
             title = b.title, author = b.author, intro = b.intro,
             updatedAt = b.updatedAt,
             groupName = b.groupName, hidden = b.hidden,
+            // 老版本写的备份不带收藏（null）：沿用本机的，别被一台老设备清掉（见 BackupBook.favorite）
+            favorite = b.favorite ?: existing.favorite,
             deleted = b.deleted,
             // 备份里的都是真正上过架的书（或墓碑）。本地若还是试读行，
             // 被远端一份活书盖过来时必须上架，否则书架上永远看不见。
@@ -476,6 +501,36 @@ internal fun applySyncedRule(existing: ReplaceRuleEntity?, r: BackupReplaceRule)
         sortOrder = r.sortOrder, updatedAt = r.updatedAt, deleted = r.deleted,
     )
 }
+
+/** 写事务内重读后的书签裁决；null 表示最新本地行胜出（或一样）、不必写库。同 [applySyncedRule] */
+internal fun applySyncedBookmark(existing: BookmarkEntity?, m: BackupBookmark): BookmarkEntity? {
+    if (existing != null && existing.updatedAt >= m.updatedAt) return null
+    return BookmarkEntity(
+        id = m.id, bookId = m.bookId, chapterIndex = m.chapterIndex, charOffset = m.charOffset,
+        chapterTitle = m.chapterTitle, excerpt = m.excerpt, createdAt = m.createdAt,
+        updatedAt = m.updatedAt, deleted = m.deleted,
+    )
+}
+
+/** 写事务内重读后的摘抄裁决；同 [applySyncedBookmark] */
+internal fun applySyncedExcerpt(existing: ExcerptEntity?, e: BackupExcerpt): ExcerptEntity? {
+    if (existing != null && existing.updatedAt >= e.updatedAt) return null
+    return ExcerptEntity(
+        id = e.id, bookId = e.bookId, chapterIndex = e.chapterIndex, charOffset = e.charOffset,
+        chapterTitle = e.chapterTitle, text = e.text, createdAt = e.createdAt,
+        updatedAt = e.updatedAt, deleted = e.deleted,
+    )
+}
+
+private fun BookmarkEntity.toBackup() = BackupBookmark(
+    id = id, bookId = bookId, chapterIndex = chapterIndex, charOffset = charOffset,
+    chapterTitle = chapterTitle, excerpt = excerpt, createdAt = createdAt, updatedAt = updatedAt, deleted = deleted,
+)
+
+private fun ExcerptEntity.toBackup() = BackupExcerpt(
+    id = id, bookId = bookId, chapterIndex = chapterIndex, charOffset = charOffset,
+    chapterTitle = chapterTitle, text = text, createdAt = createdAt, updatedAt = updatedAt, deleted = deleted,
+)
 
 /** 旧备份未携带的附属字段保留本地，显式空值则按远端更新。 */
 internal fun applySyncedRss(

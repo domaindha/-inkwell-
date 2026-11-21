@@ -87,6 +87,13 @@ data class BookEntity(
     val inShelf: Boolean = true,
     /** 用户主动移出书架，保留文件、目录与进度；与从未加入的试读区分，参与同步。 */
     val removedFromShelf: Boolean = false,
+    /**
+     * 收藏（书架「收藏」筛选、长按菜单与详情页顶栏的星标）。书多、读得散的人靠它圈出真正想读的那几本。
+     *
+     * 和分组、隐藏一样是要跨设备同步的元数据：改它**必须同时盖 updatedAt**（见 BookDao.setFavorite），
+     * 合并按 updatedAt 做 LWW。
+     */
+    val favorite: Boolean = false,
 )
 
 /** 阅读统计的轻量书目；不读取文件路径、封面、简介与阅读进度。 */

@@ -14,10 +14,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** v1 夹具取自 be399b89 的三个实体；实际执行应用注册的整条迁移，再与 Room 导出的 v23 结构核对。 */
+/** v1 夹具取自 be399b89 的三个实体；实际执行应用注册的整条迁移，再与 Room 导出的 v24 结构核对。 */
 class MigrationChainTest {
     private fun SQLiteConnection.seedV1() {
         execSQL("""CREATE TABLE book (
@@ -46,8 +45,8 @@ class MigrationChainTest {
         BundledSQLiteDriver().open(":memory:").use { db ->
             db.seedV1()
             val chain = InkwellDb.ALL_MIGRATIONS
-            assertEquals((1 until 23).toList(), chain.map { it.startVersion })
-            assertEquals((2..23).toList(), chain.map { it.endVersion })
+            assertEquals((1 until 24).toList(), chain.map { it.startVersion })
+            assertEquals((2..24).toList(), chain.map { it.endVersion })
             chain.forEach { migration ->
                 if (migration.startVersion == 22) {
                     db.execSQL("""
@@ -58,11 +57,15 @@ class MigrationChainTest {
                     """.trimIndent())
                 }
                 migration.migrate(db)
+                if (migration.endVersion == 7) {
+                    // beta.26 的书签表：v8 删掉，v24 按新结构重建 —— 旧行不该留到新表里
+                    db.execSQL("INSERT INTO bookmark VALUES ('old', 'local', 1, 2, '旧章', '旧书签', 100)")
+                }
                 if (migration.endVersion == 9) {
                     db.execSQL("INSERT INTO rss_source (id, name, json, groupName, icon, sortOrder) VALUES ('rss', '订阅', '{}', '技术', 'icon.png', 7)")
                 }
             }
-            db.prepare("SELECT localPath, readChapterIndex, readCharOffset, readAt, inShelf, removedFromShelf FROM book WHERE id = 'local'").use {
+            db.prepare("SELECT localPath, readChapterIndex, readCharOffset, readAt, inShelf, removedFromShelf, favorite FROM book WHERE id = 'local'").use {
                 assertTrue(it.step())
                 assertEquals("/books/kept.txt", it.getText(0))
                 assertEquals(42L, it.getLong(1))
@@ -70,6 +73,12 @@ class MigrationChainTest {
                 assertEquals(123456L, it.getLong(3))
                 assertEquals(1L, it.getLong(4))
                 assertEquals(0L, it.getLong(5))
+                // 升级上来的书一本都不该凭空变成「收藏」
+                assertEquals(0L, it.getLong(6))
+            }
+            db.prepare("SELECT COUNT(*) FROM bookmark").use {
+                assertTrue(it.step())
+                assertEquals(0L, it.getLong(0))
             }
             db.prepare("SELECT title, start, end, isCached FROM chapter WHERE bookId = 'local' AND `index` = 42").use {
                 assertTrue(it.step())
@@ -100,16 +109,18 @@ class MigrationChainTest {
     }
 
     private fun SQLiteConnection.validateCurrentSchema() {
-        val schema = Json.parseToJsonElement(File("schemas/com.radium.inkwell.data.db.InkwellDb/23.json").readText())
+        val schema = Json.parseToJsonElement(File("schemas/com.radium.inkwell.data.db.InkwellDb/24.json").readText())
             .jsonObject.getValue("database").jsonObject
-        assertEquals(23, schema.getValue("version").jsonPrimitive.int)
+        assertEquals(24, schema.getValue("version").jsonPrimitive.int)
         val entities = schema.getValue("entities").jsonArray.map { it.jsonObject }
         val expectedTables = entities.map { it.string("tableName") }.toSet()
         val actualTables = prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").use { st ->
             buildSet { while (st.step()) add(st.getText(0)) }
         }
         assertEquals(expectedTables, actualTables)
-        assertFalse("bookmark" in actualTables)
+        // beta.26 的旧书签表 v8 已删；v24 重建的是新结构（带 updatedAt / deleted），列由下面逐表核对
+        assertTrue("bookmark" in actualTables)
+        assertTrue("excerpt" in actualTables)
         entities.forEach { entity ->
             val table = entity.string("tableName")
             val pk = entity.getValue("primaryKey").jsonObject.getValue("columnNames").jsonArray.map { it.jsonPrimitive.content }

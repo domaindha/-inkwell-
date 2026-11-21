@@ -7,7 +7,7 @@ import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
 /**
- * WebDAV 备份载荷：书架元数据 + 阅读进度 + 书源 + 净化规则 + 应用/阅读设置。
+ * WebDAV 备份载荷：书架元数据 + 阅读进度 + 书源 + 净化规则 + 应用/阅读设置 + 书签与摘抄。
  * 不含书籍文件与正文缓存 —— 本地书的文件不上传，换设备要重新导入。
  *
  * 老版本的备份文件没有后加的字段，反序列化时按默认值补上（ignoreUnknownKeys + 默认值），
@@ -28,6 +28,45 @@ data class BackupPayload(
     val appSettings: BackupSettings? = null,
     /** 阅读时长，按「设备 + 日期 + 书」一行。合并规则见 [BackupReadingStat] */
     val readingStats: List<BackupReadingStat> = emptyList(),
+    /** 书签；逐条按 updatedAt LWW，删除靠墓碑（同 [BackupReplaceRule]） */
+    val bookmarks: List<BackupBookmark> = emptyList(),
+    /** 摘抄；同 [bookmarks] */
+    val excerpts: List<BackupExcerpt> = emptyList(),
+)
+
+/**
+ * 书签：书里的一个位置，(章, 章内字符偏移) 与阅读进度同一套坐标。
+ *
+ * 逐条 LWW、删除是墓碑，和净化规则一样。老版本不认识这个键：它读进来直接忽略，上传时也就不带 ——
+ * 远端那份书签会被老设备「抹掉」，但新设备本地的行还在，下次同步按「本地有、远端无」原样再传上去，丢不了。
+ */
+@Serializable
+data class BackupBookmark(
+    val id: String,
+    val bookId: String,
+    val chapterIndex: Int = 0,
+    val charOffset: Int = 0,
+    val chapterTitle: String = "",
+    val excerpt: String = "",
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    /** 软删除墓碑，语义见 [BackupBook.deleted] */
+    val deleted: Boolean = false,
+)
+
+/** 摘抄：选中的一段字 + 它在书里的位置。合并语义同 [BackupBookmark] */
+@Serializable
+data class BackupExcerpt(
+    val id: String,
+    val bookId: String,
+    val chapterIndex: Int = 0,
+    val charOffset: Int = 0,
+    val chapterTitle: String = "",
+    val text: String = "",
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    /** 软删除墓碑，语义见 [BackupBook.deleted] */
+    val deleted: Boolean = false,
 )
 
 /**
@@ -166,6 +205,14 @@ data class BackupBook(
     val deleted: Boolean = false,
     /** 主动移出书架；保留阅读记录，不触发远端文件删除。 */
     val removedFromShelf: Boolean = false,
+    /**
+     * 收藏。随元数据按 updatedAt LWW。
+     *
+     * 可空、null = 「这份备份没带这个字段」（老版本写的），而不是「没收藏」：老设备改了这本书的分组、
+     * 时间戳更新后整条胜出，它不认识收藏、写出来就没有这个键 —— 当成 false 的话，收藏会被一台老设备悄悄清掉。
+     * 合并时 null 就沿用另一边的（见 BackupMerger.mergeBook），同订阅源那几个后加字段（[BackupRssSource.groupName]）。
+     */
+    val favorite: Boolean? = null,
 )
 
 @Serializable
@@ -235,6 +282,11 @@ object BackupMerger {
         /** 合并后的全部阅读时长行，与其中比本地大（需要写回本地）的那些 */
         val readingStats: List<BackupReadingStat> = emptyList(),
         val changedReadingStats: List<BackupReadingStat> = emptyList(),
+        /** 合并后的全部书签 / 摘抄（含墓碑），与其中和本地不同（需要写回本地）的那些 */
+        val bookmarks: List<BackupBookmark> = emptyList(),
+        val changedBookmarks: List<BackupBookmark> = emptyList(),
+        val excerpts: List<BackupExcerpt> = emptyList(),
+        val changedExcerpts: List<BackupExcerpt> = emptyList(),
         /** 合并后要上传的设置（取较新的那份） */
         val mergedReaderSettings: BackupSettings?,
         val mergedAppSettings: BackupSettings?,
@@ -297,6 +349,13 @@ object BackupMerger {
         val mergedStats = mergeReadingStats(local.readingStats, remote.readingStats)
         val changedStats = mergedStats.filter { it != localStats[it.key] }
 
+        val mergedBookmarks = mergeById(local.bookmarks, remote.bookmarks, { it.id }, { it.updatedAt })
+        val localBookmarks = local.bookmarks.associateBy { it.id }
+        val changedBookmarks = mergedBookmarks.filter { it != localBookmarks[it.id] }
+        val mergedExcerpts = mergeById(local.excerpts, remote.excerpts, { it.id }, { it.updatedAt })
+        val localExcerpts = local.excerpts.associateBy { it.id }
+        val changedExcerpts = mergedExcerpts.filter { it != localExcerpts[it.id] }
+
         val readerWinner = newer(local.readerSettings, remote.readerSettings)
         val appWinner = newer(local.appSettings, remote.appSettings)
 
@@ -318,7 +377,34 @@ object BackupMerger {
             mergedAppSettings = appWinner,
             readingStats = mergedStats,
             changedReadingStats = changedStats,
+            bookmarks = mergedBookmarks,
+            changedBookmarks = changedBookmarks,
+            excerpts = mergedExcerpts,
+            changedExcerpts = changedExcerpts,
         )
+    }
+
+    /**
+     * 按 id 并集、同 id 取 updatedAt 较大者；打平时本地优先（免得每次同步都来回覆盖）。
+     * 和书源、净化规则同一条规则，删除就是一次普通的 updatedAt 更新（墓碑），不用开特例。
+     */
+    internal fun <T> mergeById(
+        local: List<T>,
+        remote: List<T>,
+        id: (T) -> String,
+        updatedAt: (T) -> Long,
+    ): List<T> {
+        val localById = local.associateBy(id)
+        val remoteById = remote.associateBy(id)
+        return (localById.keys + remoteById.keys).map { key ->
+            val l = localById[key]
+            val r = remoteById[key]
+            when {
+                l == null -> r!!
+                r == null -> l
+                else -> if (updatedAt(r) > updatedAt(l)) r else l
+            }
+        }
     }
 
     /** 同一行（设备 + 日期 + 书）取较大值；只有一边有的原样保留。理由见 [BackupReadingStat] */
@@ -357,7 +443,7 @@ object BackupMerger {
      * 旧源真读不了时自动换源会按章节标题再对齐一次。
      */
     private fun mergeBook(l: BackupBook, r: BackupBook): BackupBook {
-        val meta = if (r.updatedAt > l.updatedAt) r else l
+        val meta = mergeFavorite(if (r.updatedAt > l.updatedAt) r else l, l, r)
         // 封面不走 LWW，走「谁有算谁的」：它不是用户改得动的状态，null 只意味着
         // 「这台机器还没拿到」。按 LWW 裁的话，接收端只要读过一次书（updatedAt 一更新），
         // 本地那条空封面就会一直赢下去，封面永远补不回来。
@@ -388,6 +474,15 @@ object BackupMerger {
             readAt = position.readAt,
             coverUrl = coverUrl,
         )
+    }
+
+    /**
+     * 收藏随元数据走；胜出那份没带这个字段（老版本写的，null）就沿用另一边的，理由见 [BackupBook.favorite]。
+     */
+    private fun mergeFavorite(meta: BackupBook, l: BackupBook, r: BackupBook): BackupBook {
+        if (meta.favorite != null) return meta
+        val other = if (meta === r) l else r
+        return if (other.favorite == null) meta else meta.copy(favorite = other.favorite)
     }
 
     /** 两份记录是不是同一个书源上的同一本书（本地书两边都是 null，也算同一个） */

@@ -47,6 +47,9 @@ val appModule = module {
     single { get<InkwellDb>().rssSourceDao() }
     single { get<InkwellDb>().readingStatDao() }
     single { get<InkwellDb>().rssArticleDao() }
+    single { get<InkwellDb>().bookmarkDao() }
+    single { get<InkwellDb>().excerptDao() }
+    single { com.radium.inkwell.data.repo.BookNotesRepository(get(), get()) }
     single { com.radium.inkwell.data.repo.ReadingStatsRepository(get(), get(), get()) }
 
     // EPUB/MOBI 的 sniff 靠魔数，txt 兜底放最后
@@ -149,7 +152,7 @@ val appModule = module {
     single { NetBookRepository(get(), get(), get(), get(), get(), get()) }
     single { AutoSourceSwitcher(get(), get()) }
     single { com.radium.inkwell.util.LocalNetworkAccess(androidContext()) }
-    single { WebDavRepository(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { WebDavRepository(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { com.radium.inkwell.data.repo.LocalBookBackupRepository(get(), get(), get()) }
     single { com.radium.inkwell.data.net.OfficialWebDavClient(get()) }
     single { com.radium.inkwell.data.repo.OfficialWebDavRepository(get(), get()) }
