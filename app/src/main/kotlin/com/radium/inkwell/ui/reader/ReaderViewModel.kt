@@ -545,6 +545,7 @@ class ReaderViewModel(
             ),
             measured = measured,
             complete = complete,
+            elementStarts = elementStarts,
         )
 
     private suspend fun loadSession() {
